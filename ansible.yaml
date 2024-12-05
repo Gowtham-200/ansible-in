@@ -1,0 +1,183 @@
+---
+- hosts: localhost
+  become: yes
+  gather_facts: false
+  gather_facts: false
+
+
+  ### Inline Variable ###
+
+  vars:
+    - aws_access_key: ""
+    - aws_secret_key: ""
+      title: "Gowtham"
+    - vpc_name: gowtham_vpc
+    - igw_name: gowtham_igw
+    - pubsubnet_name: gowtham_pub
+    - pvtsubnet_name: gowtham_pvt
+    - pubroute_table_name: gowtham_pub_rt
+    - pvtroute_table_name: gowtham_pvt_rt
+    - security_group_name: gowtham_sg
+    - vpc_cidr_block: '10.0.0.0/16'
+    - pubsubnet_cidr_block: '10.0.1.0/24'
+    - pvtsubnet_cidr_block: '10.0.2.0/24'
+    - destination_cidr_block: '0.0.0.0/0'
+    - port22_cidr_block: '0.0.0.0/0'
+    - region: "us-east-1"
+    - pubzone: "us-east-1a"
+    - pvtzone: "us-east-1b"
+    - image_id: "ami-0166fe664262f664c"
+    - type: "t2.micro"
+    - key_name: "awskeypair"
+    - instance_name: gowtham-ec2
+    - instance2_name: gowtham2-ec2
+
+  tasks:
+
+    ###vpc creation ###
+    
+    - ec2_vpc_net:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        cidr_block: "{{ vpc_cidr_block }}"
+        name: "{{ vpc_name }}"
+        region: "{{ region }}"
+        # enable dns support
+        dns_support: yes
+        # enable dns hostnames
+        dns_hostnames: yes
+        tenancy: default
+        state: present # to delete VPC then replace absent instead of present
+      register: vpc_result
+
+       ### Internet Gateway Creation ###
+    - ec2_vpc_igw:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "{{ region }}"
+        state: present
+        tags:
+          Name: "{{ igw_name }}"
+      register: igw_result
+
+
+    ## Create a VPC Public Subnet ##
+    - ec2_vpc_subnet:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "{{ region }}"
+        az: "{{ pubzone }}"  # Availability zone
+        state: present
+        cidr: "{{ pubsubnet_cidr_block }}"
+        # Enable public IP
+        map_public: yes
+        resource_tags:
+          Name: "{{ pubsubnet_name }}"
+      register: pubsubnet_result
+
+     ## Create a VPC Public Subnet ##
+    - ec2_vpc_subnet:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "{{ region }}"
+        az: "{{ pvtzone }}"  # Availability zone
+        state: present
+        cidr: "{{ pvtsubnet_cidr_block }}"
+        # Enable public IP
+        map_public: yes
+        resource_tags:
+          Name: "{{ pvtsubnet_name }}"
+      register: pvtsubnet_result
+
+      ### Create a Private Route Table
+    - ec2_vpc_route_table:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "{{ region }}"
+        state: present
+        tags:
+          Name: "{{ pubroute_table_name }}"
+        subnets: [ "{{ pubsubnet_result.subnet.id }}" ]
+        ### create route
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw_result.gateway_id }}"
+      register: public_route_table
+
+
+         ### Create a Private Route Table
+    - ec2_vpc_route_table:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "{{ region }}"
+        state: present
+        tags:
+          Name: "{{ pvtroute_table_name }}"
+        subnets: [ "{{ pvtsubnet_result.subnet.id }}" ]
+        ### create route
+        routes:
+          - dest: 0.0.0.0/0
+            gateway_id: "{{ igw_result.gateway_id }}"
+      register: private_route_table
+
+        # Create a Security Group
+
+    - ec2_group:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        vpc_id: "{{ vpc_result.vpc.id }}"
+        region: "{{ region }}"
+        state: present
+        name: "{{ security_group_name }}"
+        description: allow
+        tags:
+          Name: "gowtham-sg"
+        rules:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+            rule_desc: allow all traffic
+      register: security_group_results
+
+       # Launch EC2 Instance
+
+    - ec2:
+        image: ami-0166fe664262f664c
+        instance_type: "{{ type }}"
+        key_name: "{{ key_name }}"
+        region: "{{ region }}"
+        wait: yes
+        count: 1
+        state: present
+        vpc_subnet_id: "{{ pubsubnet_result.subnet.id }}"
+        assign_public_ip: yes
+        group_id: "{{ security_group_results.group_id }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        user_data: "{{ lookup('file', 'data1.sh') }}"
+        instance_tags:
+                Name: "{{ instance_name }}"
+
+       # Launch EC2 Instance
+
+    - ec2:
+        image: ami-0166fe664262f664c
+        instance_type: "{{ type }}"
+        key_name: "{{ key_name }}"
+        region: "{{ region }}"
+        wait: yes
+        count: 1
+        state: present
+        vpc_subnet_id: "{{ pubsubnet_result.subnet.id }}"
+        assign_public_ip: yes
+        group_id: "{{ security_group_results.group_id }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        user_data: "{{ lookup('file', 'data2.sh') }}"
+        instance_tags:
+                Name: "{{ instance2_name }}"
+
